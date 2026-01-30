@@ -1,17 +1,145 @@
 import { useState } from "react";
 import { useAuthStore } from "../store/useAuthStore";
 import BorderAnimatedContainer from "../components/BorderAnimatedContainer";
-import { MessageCircleIcon, MailIcon, LoaderIcon, LockIcon } from "lucide-react";
+import {
+  MessageCircleIcon,
+  MailIcon,
+  LoaderIcon,
+  LockIcon,
+  PhoneIcon,
+  ArrowLeftIcon,
+} from "lucide-react";
 import { Link } from "react-router";
 
 function LoginPage() {
   const [formData, setFormData] = useState({ email: "", password: "" });
-  const { login, isLoggingIn } = useAuthStore();
+  const [otp, setOtp] = useState("");
 
-  const handleSubmit = (e) => {
+  const {
+    login,
+    isLoggingIn,
+    verifyLoginOTP,
+    isVerifyingOTP,
+    resendOTP,
+    isResendingOTP,
+    cancelOTPFlow,
+    otpStep,
+    pendingPhone,
+  } = useAuthStore();
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    login(formData);
+    await login(formData);
   };
+
+  const handleVerifyOTP = async (e) => {
+    e.preventDefault();
+    await verifyLoginOTP(otp);
+  };
+
+  const handleResendOTP = async () => {
+    await resendOTP();
+  };
+
+  const handleBack = () => {
+    cancelOTPFlow();
+    setOtp("");
+  };
+
+  // Show OTP verification form if in login OTP step
+  if (otpStep === "login") {
+    return (
+      <div className="w-full flex items-center justify-center p-4 bg-slate-900">
+        <div className="relative w-full max-w-6xl md:h-[800px] h-[650px]">
+          <BorderAnimatedContainer>
+            <div className="w-full flex flex-col md:flex-row">
+              {/* OTP VERIFICATION FORM */}
+              <div className="md:w-1/2 p-8 flex items-center justify-center md:border-r border-slate-600/30">
+                <div className="w-full max-w-md">
+                  {/* BACK BUTTON */}
+                  <button
+                    onClick={handleBack}
+                    className="flex items-center gap-2 text-slate-400 hover:text-slate-200 mb-6 transition-colors"
+                  >
+                    <ArrowLeftIcon className="w-4 h-4" />
+                    Back
+                  </button>
+
+                  {/* HEADING TEXT */}
+                  <div className="text-center mb-8">
+                    <PhoneIcon className="w-12 h-12 mx-auto text-cyan-400 mb-4" />
+                    <h2 className="text-2xl font-bold text-slate-200 mb-2">Verify Your Identity</h2>
+                    <p className="text-slate-400">
+                      We've sent a 6-digit OTP to{" "}
+                      <span className="text-cyan-400">{pendingPhone}</span>
+                    </p>
+                  </div>
+
+                  {/* OTP FORM */}
+                  <form onSubmit={handleVerifyOTP} className="space-y-6">
+                    {/* OTP INPUT */}
+                    <div>
+                      <label className="auth-input-label">Enter OTP</label>
+                      <div className="relative">
+                        <LockIcon className="auth-input-icon" />
+                        <input
+                          type="text"
+                          value={otp}
+                          onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                          className="input text-center tracking-widest text-lg"
+                          placeholder="000000"
+                          maxLength={6}
+                        />
+                      </div>
+                    </div>
+
+                    {/* VERIFY BUTTON */}
+                    <button
+                      className="auth-btn"
+                      type="submit"
+                      disabled={isVerifyingOTP || otp.length !== 6}
+                    >
+                      {isVerifyingOTP ? (
+                        <LoaderIcon className="w-full h-5 animate-spin text-center" />
+                      ) : (
+                        "Verify OTP"
+                      )}
+                    </button>
+                  </form>
+
+                  {/* RESEND OTP */}
+                  <div className="mt-6 text-center">
+                    <button
+                      onClick={handleResendOTP}
+                      disabled={isResendingOTP}
+                      className="text-slate-400 hover:text-cyan-400 transition-colors disabled:opacity-50"
+                    >
+                      {isResendingOTP ? "Sending..." : "Didn't receive OTP? Resend"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ILLUSTRATION - RIGHT SIDE */}
+              <div className="hidden md:w-1/2 md:flex items-center justify-center p-6 bg-gradient-to-bl from-slate-800/20 to-transparent">
+                <div>
+                  <img
+                    src="/login.png"
+                    alt="People using mobile devices"
+                    className="w-full h-auto object-contain"
+                  />
+                  <div className="mt-6 text-center">
+                    <h3 className="text-xl font-medium text-cyan-400">One More Step!</h3>
+                    <p className="text-slate-400 mt-2">Verify your identity to continue</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </BorderAnimatedContainer>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full flex items-center justify-center p-4 bg-slate-900">

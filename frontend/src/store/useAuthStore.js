@@ -10,8 +10,15 @@ export const useAuthStore = create((set, get) => ({
   isCheckingAuth: true,
   isSigningUp: false,
   isLoggingIn: false,
+  isVerifyingOTP: false,
+  isResendingOTP: false,
   socket: null,
   onlineUsers: [],
+
+  // OTP flow state
+  pendingUserId: null,
+  pendingPhone: null,
+  otpStep: null, // 'signup' | 'login' | null
 
   checkAuth: async () => {
     try {
@@ -26,35 +33,150 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  // Step 1 of signup: Submit form, receive OTP
   signup: async (data) => {
     set({ isSigningUp: true });
     try {
       const res = await axiosInstance.post("/auth/signup", data);
-      set({ authUser: res.data });
 
-      toast.success("Account created successfully!");
-      get().connectSocket();
+      // OTP sent, move to verification step
+      set({
+        pendingUserId: res.data.userId,
+        pendingPhone: res.data.phone,
+        otpStep: "signup",
+      });
+
+      toast.success("OTP sent to your phone!");
+      return true;
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Signup failed");
+      return false;
     } finally {
       set({ isSigningUp: false });
     }
   },
 
+  // Step 2 of signup: Verify OTP
+  verifySignupOTP: async (otp) => {
+    const { pendingUserId } = get();
+    if (!pendingUserId) {
+      toast.error("Session expired. Please signup again.");
+      return false;
+    }
+
+    set({ isVerifyingOTP: true });
+    try {
+      const res = await axiosInstance.post("/auth/verify-signup-otp", {
+        userId: pendingUserId,
+        otp,
+      });
+
+      set({
+        authUser: res.data,
+        pendingUserId: null,
+        pendingPhone: null,
+        otpStep: null,
+      });
+
+      toast.success("Account created successfully!");
+      get().connectSocket();
+      return true;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "OTP verification failed");
+      return false;
+    } finally {
+      set({ isVerifyingOTP: false });
+    }
+  },
+
+  // Step 1 of login: Submit credentials, receive OTP
   login: async (data) => {
     set({ isLoggingIn: true });
     try {
       const res = await axiosInstance.post("/auth/login", data);
-      set({ authUser: res.data });
 
-      toast.success("Logged in successfully");
+      // OTP sent, move to verification step
+      set({
+        pendingUserId: res.data.userId,
+        pendingPhone: res.data.phone,
+        otpStep: "login",
+      });
 
-      get().connectSocket();
+      toast.success("OTP sent to your phone!");
+      return true;
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Login failed");
+      return false;
     } finally {
       set({ isLoggingIn: false });
     }
+  },
+
+  // Step 2 of login: Verify OTP
+  verifyLoginOTP: async (otp) => {
+    const { pendingUserId } = get();
+    if (!pendingUserId) {
+      toast.error("Session expired. Please login again.");
+      return false;
+    }
+
+    set({ isVerifyingOTP: true });
+    try {
+      const res = await axiosInstance.post("/auth/verify-login-otp", {
+        userId: pendingUserId,
+        otp,
+      });
+
+      set({
+        authUser: res.data,
+        pendingUserId: null,
+        pendingPhone: null,
+        otpStep: null,
+      });
+
+      toast.success("Logged in successfully!");
+      get().connectSocket();
+      return true;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "OTP verification failed");
+      return false;
+    } finally {
+      set({ isVerifyingOTP: false });
+    }
+  },
+
+  // Resend OTP
+  resendOTP: async () => {
+    const { pendingUserId } = get();
+    if (!pendingUserId) {
+      toast.error("Session expired. Please try again.");
+      return false;
+    }
+
+    set({ isResendingOTP: true });
+    try {
+      const res = await axiosInstance.post("/auth/resend-otp", {
+        userId: pendingUserId,
+      });
+
+      set({ pendingPhone: res.data.phone });
+      toast.success("OTP resent to your phone!");
+      return true;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to resend OTP");
+      return false;
+    } finally {
+      set({ isResendingOTP: false });
+    }
+  },
+
+  // Cancel OTP flow and go back
+  cancelOTPFlow: () => {
+    set({
+      pendingUserId: null,
+      pendingPhone: null,
+      otpStep: null,
+    });
   },
 
   logout: async () => {
@@ -76,7 +198,7 @@ export const useAuthStore = create((set, get) => ({
       toast.success("Profile updated successfully");
     } catch (error) {
       console.log("Error in update profile:", error);
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Update failed");
     }
   },
 
@@ -85,14 +207,13 @@ export const useAuthStore = create((set, get) => ({
     if (!authUser || get().socket?.connected) return;
 
     const socket = io(BASE_URL, {
-      withCredentials: true, // this ensures cookies are sent with the connection
+      withCredentials: true,
     });
 
     socket.connect();
 
     set({ socket });
 
-    // listen for online users event
     socket.on("getOnlineUsers", (userIds) => {
       set({ onlineUsers: userIds });
     });
