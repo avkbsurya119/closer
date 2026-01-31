@@ -30,6 +30,13 @@ export const useAuthStore = create((set, get) => ({
   checkAuth: async () => {
     try {
       const res = await axiosInstance.get("/auth/check");
+
+      // Recover private key from server if not in localStorage
+      if (!hasEncryptionKeys() && res.data.privateKey) {
+        console.log("Recovering encryption key from server...");
+        storePrivateKey(res.data.privateKey);
+      }
+
       set({ authUser: res.data });
       get().connectSocket();
     } catch (error) {
@@ -82,8 +89,8 @@ export const useAuthStore = create((set, get) => ({
       console.log("Generating encryption keys...");
       const { publicKey, privateKey } = await generateKeyPair();
 
-      // Store public key on server
-      await axiosInstance.post("/auth/public-key", { publicKey });
+      // Store both keys on server (private key for recovery)
+      await axiosInstance.post("/auth/public-key", { publicKey, privateKey });
 
       // Store private key in localStorage
       storePrivateKey(privateKey);
@@ -148,18 +155,21 @@ export const useAuthStore = create((set, get) => ({
 
       // Check if user has local private key
       if (!hasEncryptionKeys()) {
-        // Generate new key pair if no local key exists
-        console.log("No local encryption key found. Generating new keys...");
-        const { publicKey, privateKey } = await generateKeyPair();
-
-        // Store new public key on server
-        await axiosInstance.post("/auth/public-key", { publicKey });
-
-        // Store private key locally
-        storePrivateKey(privateKey);
-
-        userData = { ...userData, publicKey };
-        toast.success("New encryption keys generated!");
+        // Try to recover private key from server
+        if (res.data.privateKey) {
+          console.log("Recovering encryption key from server...");
+          storePrivateKey(res.data.privateKey);
+        } else if (res.data.publicKey) {
+          // User has public key but no private key anywhere - can't recover
+          console.log("No private key found. E2E encryption disabled for old messages.");
+        } else {
+          // No keys at all - generate new ones
+          console.log("No encryption keys found. Generating new keys...");
+          const { publicKey, privateKey } = await generateKeyPair();
+          await axiosInstance.post("/auth/public-key", { publicKey, privateKey });
+          storePrivateKey(privateKey);
+          userData = { ...userData, publicKey };
+        }
       }
 
       set({

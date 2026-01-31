@@ -170,6 +170,7 @@ export const verifySignupOTP = async (req, res) => {
       phone: user.phone,
       profilePic: user.profilePic,
       publicKey: user.publicKey,
+      privateKey: user.privateKey,
     });
   } catch (error) {
     console.log("Error in verifySignupOTP controller:", error);
@@ -251,6 +252,7 @@ export const verifyLoginOTP = async (req, res) => {
       phone: user.phone,
       profilePic: user.profilePic,
       publicKey: user.publicKey,
+      privateKey: user.privateKey,
     });
   } catch (error) {
     console.log("Error in verifyLoginOTP controller:", error);
@@ -325,6 +327,7 @@ export const checkAuth = async (req, res) => {
       phone: req.user.phone,
       profilePic: req.user.profilePic,
       publicKey: req.user.publicKey,
+      privateKey: req.user.privateKey, // For key recovery
     });
   } catch (error) {
     console.log("Error in checkAuth controller:", error);
@@ -334,24 +337,29 @@ export const checkAuth = async (req, res) => {
 
 // ==================== PUBLIC KEY MANAGEMENT ====================
 
-// Store user's public key
+// Store user's key pair (public key for others, private key for recovery)
 export const storePublicKey = async (req, res) => {
   try {
-    const { publicKey } = req.body;
+    const { publicKey, privateKey } = req.body;
     const userId = req.user._id;
 
     if (!publicKey) {
       return res.status(400).json({ message: "Public key is required" });
     }
 
+    const updateData = { publicKey };
+    if (privateKey) {
+      updateData.privateKey = privateKey;
+    }
+
     const user = await User.findByIdAndUpdate(
       userId,
-      { publicKey },
+      updateData,
       { new: true }
     ).select("-password -otp -otpExpiry");
 
     res.status(200).json({
-      message: "Public key stored successfully",
+      message: "Keys stored successfully",
       publicKey: user.publicKey,
     });
   } catch (error) {
