@@ -34,6 +34,29 @@ const groupMessageSchema = new mongoose.Schema(
       enum: ["member_added", "member_removed", "member_left", "member_promoted", "member_demoted", null],
       default: null,
     },
+    // E2E Encryption fields
+    isEncrypted: {
+      type: Boolean,
+      default: false,
+    },
+    // Array of encrypted keys - one for each group member
+    encryptedKeys: [{
+      recipientId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+      encryptedKey: String, // AES key encrypted with recipient's RSA public key
+    }],
+    iv: {
+      type: String, // Initialization vector for AES-GCM
+    },
+    // Digital Signature
+    signature: {
+      type: String,
+    },
+    senderPublicKey: {
+      type: String,
+    },
   },
   { timestamps: true }
 );

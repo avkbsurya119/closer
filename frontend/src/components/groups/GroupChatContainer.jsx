@@ -4,7 +4,7 @@ import { useGroupStore } from "../../store/useGroupStore";
 import GroupHeader from "./GroupHeader";
 import GroupMessageInput from "./GroupMessageInput";
 import MessagesLoadingSkeleton from "../MessagesLoadingSkeleton";
-import { UsersIcon, Trash2Icon, UserPlusIcon, UserMinusIcon, LogOutIcon, ArrowUpIcon, ArrowDownIcon } from "lucide-react";
+import { UsersIcon, Trash2Icon, UserPlusIcon, UserMinusIcon, LogOutIcon, ArrowUpIcon, ArrowDownIcon, LockIcon, ShieldCheckIcon, ShieldAlertIcon, UnlockIcon } from "lucide-react";
 
 function GroupChatContainer() {
   const {
@@ -158,6 +158,28 @@ function GroupChatContainer() {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
+                      {/* Encryption indicator */}
+                      {msg.isEncrypted && (
+                        <span title={msg.decrypted ? "End-to-end encrypted" : "Encrypted"}>
+                          <LockIcon className="w-3 h-3 text-green-400" />
+                        </span>
+                      )}
+                      {/* Signature indicator */}
+                      {msg.signatureValid === true && (
+                        <span title="Signature verified - Message is authentic">
+                          <ShieldCheckIcon className="w-3 h-3 text-green-400" />
+                        </span>
+                      )}
+                      {msg.signatureValid === false && (
+                        <span title="Signature invalid - Message may be tampered">
+                          <ShieldAlertIcon className="w-3 h-3 text-red-400" />
+                        </span>
+                      )}
+                      {msg.decryptionFailed && (
+                        <span title="Failed to decrypt message">
+                          <UnlockIcon className="w-3 h-3 text-red-400" />
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>

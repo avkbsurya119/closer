@@ -3,6 +3,206 @@ import { axiosInstance } from "../lib/axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "./useAuthStore";
 import { useChatStore } from "./useChatStore";
+import {
+  encryptMessage,
+  decryptMessage,
+  verifySignature,
+  getStoredPrivateKey,
+  hashMessage,
+} from "../lib/crypto";
+
+// Cache for public keys
+const publicKeyCache = new Map();
+
+// Fetch and cache public key
+const getPublicKey = async (userId) => {
+  if (publicKeyCache.has(userId)) {
+    return publicKeyCache.get(userId);
+  }
+
+  try {
+    const res = await axiosInstance.get(`/auth/public-key/${userId}`);
+    const publicKey = res.data.publicKey;
+    if (publicKey) {
+      publicKeyCache.set(userId, publicKey);
+    }
+    return publicKey;
+  } catch (error) {
+    console.error("Error fetching public key:", error);
+    return null;
+  }
+};
+
+// Encrypt message for multiple recipients (group members)
+const encryptForGroup = async (message, memberIds, senderPrivateKey, senderPublicKey) => {
+  try {
+    // Generate AES key and encrypt message once
+    const aesKey = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const encoder = new TextEncoder();
+    const messageBuffer = encoder.encode(message);
+
+    const encryptedContent = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      aesKey,
+      messageBuffer
+    );
+
+    // Export AES key
+    const aesKeyBuffer = await window.crypto.subtle.exportKey("raw", aesKey);
+
+    // Encrypt AES key for each member
+    const encryptedKeys = [];
+    for (const memberId of memberIds) {
+      try {
+        const publicKey = await getPublicKey(memberId);
+        if (publicKey) {
+          const jwk = JSON.parse(publicKey);
+          const rsaKey = await window.crypto.subtle.importKey(
+            "jwk",
+            jwk,
+            { name: "RSA-OAEP", hash: "SHA-256" },
+            true,
+            ["encrypt"]
+          );
+
+          const encryptedKey = await window.crypto.subtle.encrypt(
+            { name: "RSA-OAEP" },
+            rsaKey,
+            aesKeyBuffer
+          );
+
+          encryptedKeys.push({
+            recipientId: memberId,
+            encryptedKey: arrayBufferToBase64(encryptedKey),
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to encrypt for member ${memberId}:`, err);
+      }
+    }
+
+    // Create signature (hash of message)
+    const signature = await hashMessage(message);
+
+    return {
+      encryptedContent: arrayBufferToBase64(encryptedContent),
+      encryptedKeys,
+      iv: arrayBufferToBase64(iv),
+      signature,
+      isEncrypted: encryptedKeys.length > 0,
+    };
+  } catch (error) {
+    console.error("Error encrypting for group:", error);
+    return null;
+  }
+};
+
+// Decrypt group message
+const decryptGroupMessage = async (message, privateKey, currentUserId) => {
+  if (!message.isEncrypted || !privateKey || message.type === "system") {
+    return message;
+  }
+
+  try {
+    // Find the encrypted key for current user
+    const myEncryptedKey = message.encryptedKeys?.find(
+      (k) => k.recipientId === currentUserId || k.recipientId?._id === currentUserId
+    );
+
+    if (!myEncryptedKey) {
+      return {
+        ...message,
+        text: "[Encrypted - no key for you]",
+        decryptionFailed: true,
+      };
+    }
+
+    // Decrypt AES key with private key
+    const jwk = JSON.parse(privateKey);
+    const rsaKey = await window.crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      true,
+      ["decrypt"]
+    );
+
+    const encryptedKeyBuffer = base64ToArrayBuffer(myEncryptedKey.encryptedKey);
+    const aesKeyBuffer = await window.crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      rsaKey,
+      encryptedKeyBuffer
+    );
+
+    // Import AES key
+    const aesKey = await window.crypto.subtle.importKey(
+      "raw",
+      aesKeyBuffer,
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["decrypt"]
+    );
+
+    // Decrypt message
+    const ivBuffer = base64ToArrayBuffer(message.iv);
+    const encryptedContentBuffer = base64ToArrayBuffer(message.text);
+
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ivBuffer },
+      aesKey,
+      encryptedContentBuffer
+    );
+
+    const decoder = new TextDecoder();
+    const decryptedText = decoder.decode(decryptedBuffer);
+
+    // Verify signature
+    let signatureValid = null;
+    if (message.signature) {
+      const currentHash = await hashMessage(decryptedText);
+      signatureValid = currentHash === message.signature;
+    }
+
+    return {
+      ...message,
+      text: decryptedText,
+      decrypted: true,
+      signatureValid,
+    };
+  } catch (error) {
+    console.error("Error decrypting group message:", error);
+    return {
+      ...message,
+      text: "[Unable to decrypt message]",
+      decryptionFailed: true,
+    };
+  }
+};
+
+// Utility functions
+const arrayBufferToBase64 = (buffer) => {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
+const base64ToArrayBuffer = (base64) => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
 
 export const useGroupStore = create((set, get) => ({
   groups: [],
@@ -169,7 +369,15 @@ export const useGroupStore = create((set, get) => ({
     set({ isGroupMessagesLoading: true });
     try {
       const res = await axiosInstance.get(`/groups/${groupId}/messages`);
-      set({ groupMessages: res.data });
+      const privateKey = getStoredPrivateKey();
+      const { authUser } = useAuthStore.getState();
+
+      // Decrypt all encrypted messages
+      const decryptedMessages = await Promise.all(
+        res.data.map((msg) => decryptGroupMessage(msg, privateKey, authUser._id))
+      );
+
+      set({ groupMessages: decryptedMessages });
     } catch (error) {
       toast.error(error.response?.data?.message || "Failed to fetch messages");
     } finally {
@@ -179,7 +387,7 @@ export const useGroupStore = create((set, get) => ({
 
   // Send a message to a group
   sendGroupMessage: async (groupId, messageData) => {
-    const { groupMessages } = get();
+    const { groupMessages, selectedGroup } = get();
     const { authUser } = useAuthStore.getState();
 
     const tempId = `temp-${Date.now()}`;
@@ -196,15 +404,59 @@ export const useGroupStore = create((set, get) => ({
       image: messageData.image,
       createdAt: new Date().toISOString(),
       isOptimistic: true,
+      isEncrypted: true,
     };
 
     // Immediately update UI
     set({ groupMessages: [...groupMessages, optimisticMessage] });
 
     try {
-      const res = await axiosInstance.post(`/groups/${groupId}/messages`, messageData);
+      let encryptedData = null;
+
+      // Only encrypt text messages
+      if (messageData.text && selectedGroup?.members) {
+        try {
+          const memberIds = selectedGroup.members.map(
+            (m) => m.user?._id || m.user
+          );
+          const senderPrivateKey = getStoredPrivateKey();
+          const senderPublicKey = authUser.publicKey;
+
+          if (senderPrivateKey && senderPublicKey) {
+            encryptedData = await encryptForGroup(
+              messageData.text,
+              memberIds,
+              senderPrivateKey,
+              senderPublicKey
+            );
+          }
+        } catch (encryptError) {
+          console.error("Encryption failed, sending unencrypted:", encryptError);
+        }
+      }
+
+      // Prepare message payload
+      const payload = {
+        text: encryptedData ? encryptedData.encryptedContent : messageData.text,
+        image: messageData.image,
+        isEncrypted: encryptedData?.isEncrypted || false,
+        encryptedKeys: encryptedData?.encryptedKeys || [],
+        iv: encryptedData?.iv,
+        signature: encryptedData?.signature,
+        senderPublicKey: authUser.publicKey,
+      };
+
+      const res = await axiosInstance.post(`/groups/${groupId}/messages`, payload);
+
       // Replace optimistic message with real one
-      set({ groupMessages: groupMessages.concat(res.data) });
+      const newMessage = {
+        ...res.data,
+        text: messageData.text, // Show original text for sender
+        decrypted: true,
+        signatureValid: true,
+      };
+
+      set({ groupMessages: groupMessages.concat(newMessage) });
     } catch (error) {
       // Remove optimistic message on failure
       set({ groupMessages: groupMessages });
@@ -233,7 +485,7 @@ export const useGroupStore = create((set, get) => ({
     const { isSoundEnabled } = useChatStore.getState();
 
     // New message in a group
-    socket.on("newGroupMessage", ({ groupId, message }) => {
+    socket.on("newGroupMessage", async ({ groupId, message }) => {
       const { selectedGroup, groupMessages, groups } = get();
       const { authUser } = useAuthStore.getState();
 
@@ -245,7 +497,11 @@ export const useGroupStore = create((set, get) => ({
         const isOwnMessage = message.senderId?._id === authUser._id;
 
         if (isSystemMessage || !isOwnMessage) {
-          set({ groupMessages: [...groupMessages, message] });
+          // Decrypt incoming message
+          const privateKey = getStoredPrivateKey();
+          const decryptedMessage = await decryptGroupMessage(message, privateKey, authUser._id);
+
+          set({ groupMessages: [...groupMessages, decryptedMessage] });
 
           // Play sound for messages from others (not for system messages)
           if (!isSystemMessage && isSoundEnabled) {

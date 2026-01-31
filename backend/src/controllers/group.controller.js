@@ -406,7 +406,15 @@ export const getGroupMessages = async (req, res) => {
 export const sendGroupMessage = async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { text, image } = req.body;
+    const {
+      text,
+      image,
+      isEncrypted,
+      encryptedKeys,
+      iv,
+      signature,
+      senderPublicKey,
+    } = req.body;
     const senderId = req.user._id;
 
     if (!text && !image) {
@@ -424,6 +432,12 @@ export const sendGroupMessage = async (req, res) => {
       senderId,
       text,
       image: imageUrl,
+      // E2E Encryption fields
+      isEncrypted: isEncrypted || false,
+      encryptedKeys: encryptedKeys || [],
+      iv,
+      signature,
+      senderPublicKey,
     });
 
     await newMessage.save();

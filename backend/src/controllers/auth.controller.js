@@ -28,6 +28,16 @@ const clearUserOTP = async (user) => {
   await user.save();
 };
 
+// Format phone number to ensure +91 prefix
+const formatPhone = (phone) => {
+  let cleaned = phone.replace(/\s+/g, "").trim();
+  if (!cleaned.startsWith("+91")) {
+    cleaned = cleaned.replace(/^0+/, ""); // Remove leading zeros
+    cleaned = "+91" + cleaned;
+  }
+  return cleaned;
+};
+
 // Validate phone number format (+91XXXXXXXXXX)
 const validatePhone = (phone) => {
   const phoneRegex = /^\+91[0-9]{10}$/;
@@ -55,13 +65,16 @@ export const signup = async (req, res) => {
       return res.status(400).json({ message: "Invalid email format" });
     }
 
-    if (!validatePhone(phone)) {
-      return res.status(400).json({ message: "Invalid phone format. Use +91XXXXXXXXXX" });
+    // Auto-format phone number to +91 prefix
+    const formattedPhone = formatPhone(phone);
+
+    if (!validatePhone(formattedPhone)) {
+      return res.status(400).json({ message: "Invalid phone number. Must be a 10-digit Indian number" });
     }
 
     // Check if email or phone already exists
     const existingUser = await User.findOne({
-      $or: [{ email }, { phone }],
+      $or: [{ email }, { phone: formattedPhone }],
     });
 
     if (existingUser) {
@@ -74,16 +87,16 @@ export const signup = async (req, res) => {
         existingUser.fullName = fullName;
         existingUser.email = email;
         existingUser.password = hashedPassword;
-        existingUser.phone = phone;
+        existingUser.phone = formattedPhone;
 
         const otp = await setUserOTP(existingUser);
 
         // Send OTP
-        await sendOTP(phone, otp);
+        await sendOTP(formattedPhone, otp);
 
         return res.status(200).json({
           message: "OTP sent to your phone",
-          phone: phone,
+          phone: formattedPhone,
           userId: existingUser._id,
         });
       }
@@ -91,7 +104,7 @@ export const signup = async (req, res) => {
       if (existingUser.email === email) {
         return res.status(400).json({ message: "Email already registered" });
       }
-      if (existingUser.phone === phone) {
+      if (existingUser.phone === formattedPhone) {
         return res.status(400).json({ message: "Phone number already registered" });
       }
     }
@@ -105,18 +118,18 @@ export const signup = async (req, res) => {
       fullName,
       email,
       password: hashedPassword,
-      phone,
+      phone: formattedPhone,
       isVerified: false,
     });
 
     const otp = await setUserOTP(newUser);
 
     // Send OTP
-    await sendOTP(phone, otp);
+    await sendOTP(formattedPhone, otp);
 
     res.status(200).json({
       message: "OTP sent to your phone",
-      phone: phone,
+      phone: formattedPhone,
       userId: newUser._id,
     });
   } catch (error) {

@@ -33,9 +33,23 @@ function SignUpPage() {
     pendingPhone,
   } = useAuthStore();
 
+  // Format phone number to ensure +91 prefix
+  const formatPhoneNumber = (phone) => {
+    let cleaned = phone.replace(/\s+/g, "").trim();
+    if (!cleaned.startsWith("+91")) {
+      cleaned = cleaned.replace(/^0+/, ""); // Remove leading zeros
+      cleaned = "+91" + cleaned;
+    }
+    return cleaned;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await signup(formData);
+    const formattedData = {
+      ...formData,
+      phone: formatPhoneNumber(formData.phone),
+    };
+    await signup(formattedData);
   };
 
   const handleVerifyOTP = async (e) => {
