@@ -5,7 +5,7 @@ import ChatHeader from "./ChatHeader";
 import NoChatHistoryPlaceholder from "./NoChatHistoryPlaceholder";
 import MessageInput from "./MessageInput";
 import MessagesLoadingSkeleton from "./MessagesLoadingSkeleton";
-import { Trash2Icon } from "lucide-react";
+import { Trash2Icon, LockIcon, ShieldCheckIcon, ShieldAlertIcon, UnlockIcon } from "lucide-react";
 
 function ChatContainer() {
   const {
@@ -81,6 +81,28 @@ function ChatContainer() {
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
+                      {/* Encryption indicator */}
+                      {msg.isEncrypted && (
+                        <span title={msg.decrypted ? "End-to-end encrypted" : "Encrypted"}>
+                          <LockIcon className="w-3 h-3 text-green-400" />
+                        </span>
+                      )}
+                      {/* Signature indicator */}
+                      {msg.signatureValid === true && (
+                        <span title="Signature verified - Message is authentic">
+                          <ShieldCheckIcon className="w-3 h-3 text-green-400" />
+                        </span>
+                      )}
+                      {msg.signatureValid === false && (
+                        <span title="Signature invalid - Message may be tampered">
+                          <ShieldAlertIcon className="w-3 h-3 text-red-400" />
+                        </span>
+                      )}
+                      {msg.decryptionFailed && (
+                        <span title="Failed to decrypt message">
+                          <UnlockIcon className="w-3 h-3 text-red-400" />
+                        </span>
+                      )}
                     </p>
                   </div>
                 </div>

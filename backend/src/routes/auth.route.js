@@ -8,6 +8,8 @@ import {
   logout,
   updateProfile,
   checkAuth,
+  storePublicKey,
+  getPublicKey,
 } from "../controllers/auth.controller.js";
 import { protectRoute } from "../middleware/auth.middleware.js";
 import { arcjetProtection } from "../middleware/arcjet.middleware.js";
@@ -31,5 +33,9 @@ router.post("/resend-otp", resendOTP);
 router.post("/logout", logout);
 router.put("/update-profile", protectRoute, updateProfile);
 router.get("/check", protectRoute, checkAuth);
+
+// Public Key Management (E2E Encryption)
+router.post("/public-key", protectRoute, storePublicKey);
+router.get("/public-key/:userId", protectRoute, getPublicKey);
 
 export default router;

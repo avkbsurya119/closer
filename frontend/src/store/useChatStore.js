@@ -2,6 +2,88 @@ import { create } from "zustand";
 import { axiosInstance } from "../lib/axios";
 import toast from "react-hot-toast";
 import { useAuthStore } from "./useAuthStore";
+import {
+  encryptMessage,
+  decryptMessage,
+  verifySignature,
+  getStoredPrivateKey,
+} from "../lib/crypto";
+
+// Cache for public keys
+const publicKeyCache = new Map();
+
+// Fetch and cache public key
+const getPublicKey = async (userId) => {
+  if (publicKeyCache.has(userId)) {
+    return publicKeyCache.get(userId);
+  }
+
+  try {
+    const res = await axiosInstance.get(`/auth/public-key/${userId}`);
+    const publicKey = res.data.publicKey;
+    if (publicKey) {
+      publicKeyCache.set(userId, publicKey);
+    }
+    return publicKey;
+  } catch (error) {
+    console.error("Error fetching public key:", error);
+    return null;
+  }
+};
+
+// Decrypt a single message
+const decryptSingleMessage = async (message, privateKey, currentUserId) => {
+  if (!message.isEncrypted || !privateKey) {
+    return message;
+  }
+
+  try {
+    // Determine which encrypted key to use based on who's viewing
+    const isSender = message.senderId === currentUserId || message.senderId?._id === currentUserId;
+    const encryptedKeyToUse = isSender ? message.senderEncryptedKey : message.encryptedKey;
+
+    if (!encryptedKeyToUse) {
+      return {
+        ...message,
+        text: "[Encrypted message]",
+        decryptionFailed: true,
+      };
+    }
+
+    const decryptedText = await decryptMessage(
+      {
+        encryptedContent: message.text,
+        encryptedKey: encryptedKeyToUse,
+        iv: message.iv,
+      },
+      privateKey
+    );
+
+    // Verify signature if present
+    let signatureValid = null;
+    if (message.signature && message.senderPublicKey) {
+      signatureValid = await verifySignature(
+        decryptedText,
+        message.signature,
+        message.senderPublicKey
+      );
+    }
+
+    return {
+      ...message,
+      text: decryptedText,
+      decrypted: true,
+      signatureValid,
+    };
+  } catch (error) {
+    console.error("Error decrypting message:", error);
+    return {
+      ...message,
+      text: "[Unable to decrypt message]",
+      decryptionFailed: true,
+    };
+  }
+};
 
 export const useChatStore = create((set, get) => ({
   allContacts: [],
@@ -44,6 +126,7 @@ export const useChatStore = create((set, get) => ({
       set({ isUsersLoading: false });
     }
   },
+
   getMyChatPartners: async () => {
     set({ isUsersLoading: true });
     try {
@@ -60,7 +143,15 @@ export const useChatStore = create((set, get) => ({
     set({ isMessagesLoading: true });
     try {
       const res = await axiosInstance.get(`/messages/${userId}`);
-      set({ messages: res.data });
+      const privateKey = getStoredPrivateKey();
+      const { authUser } = useAuthStore.getState();
+
+      // Decrypt all encrypted messages
+      const decryptedMessages = await Promise.all(
+        res.data.map((msg) => decryptSingleMessage(msg, privateKey, authUser._id))
+      );
+
+      set({ messages: decryptedMessages });
     } catch (error) {
       toast.error(error.response?.data?.message || "Something went wrong");
     } finally {
@@ -81,16 +172,68 @@ export const useChatStore = create((set, get) => ({
       text: messageData.text,
       image: messageData.image,
       createdAt: new Date().toISOString(),
-      isOptimistic: true, // flag to identify optimistic messages (optional)
+      isOptimistic: true,
+      isEncrypted: true,
     };
-    // immidetaly update the ui by adding the message
+
+    // Immediately update the UI
     set({ messages: [...messages, optimisticMessage] });
 
     try {
-      const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData);
-      set({ messages: messages.concat(res.data) });
+      let encryptedData = null;
+
+      // Only encrypt text messages (not images)
+      if (messageData.text) {
+        try {
+          const recipientPublicKey = await getPublicKey(selectedUser._id);
+          const senderPrivateKey = getStoredPrivateKey();
+          const senderPublicKey = authUser.publicKey;
+
+          if (recipientPublicKey && senderPrivateKey && senderPublicKey) {
+            encryptedData = await encryptMessage(
+              messageData.text,
+              recipientPublicKey,
+              senderPrivateKey,
+              senderPublicKey
+            );
+          } else {
+            console.log("Encryption skipped - missing keys:", {
+              hasRecipientKey: !!recipientPublicKey,
+              hasSenderPrivateKey: !!senderPrivateKey,
+              hasSenderPublicKey: !!senderPublicKey,
+            });
+          }
+        } catch (encryptError) {
+          console.error("Encryption failed, sending unencrypted:", encryptError);
+          // Continue without encryption
+        }
+      }
+
+      // Prepare message payload
+      const payload = {
+        text: encryptedData ? encryptedData.encryptedContent : messageData.text,
+        image: messageData.image,
+        isEncrypted: !!encryptedData,
+        encryptedKey: encryptedData?.encryptedKey,
+        senderEncryptedKey: encryptedData?.senderEncryptedKey,
+        iv: encryptedData?.iv,
+        signature: encryptedData?.signature,
+        senderPublicKey: authUser.publicKey,
+      };
+
+      const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, payload);
+
+      // Replace optimistic message with real one (already decrypted for sender)
+      const newMessage = {
+        ...res.data,
+        text: messageData.text, // Show original text for sender
+        decrypted: true,
+        signatureValid: true,
+      };
+
+      set({ messages: messages.concat(newMessage) });
     } catch (error) {
-      // remove optimistic message on failure
+      // Remove optimistic message on failure
       set({ messages: messages });
       toast.error(error.response?.data?.message || "Something went wrong");
     }
@@ -102,17 +245,21 @@ export const useChatStore = create((set, get) => ({
 
     const socket = useAuthStore.getState().socket;
 
-    socket.on("newMessage", (newMessage) => {
+    socket.on("newMessage", async (newMessage) => {
       const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
       if (!isMessageSentFromSelectedUser) return;
 
+      // Decrypt the incoming message
+      const privateKey = getStoredPrivateKey();
+      const { authUser } = useAuthStore.getState();
+      const decryptedMessage = await decryptSingleMessage(newMessage, privateKey, authUser._id);
+
       const currentMessages = get().messages;
-      set({ messages: [...currentMessages, newMessage] });
+      set({ messages: [...currentMessages, decryptedMessage] });
 
       if (isSoundEnabled) {
         const notificationSound = new Audio("/sounds/notification.mp3");
-
-        notificationSound.currentTime = 0; // reset to start
+        notificationSound.currentTime = 0;
         notificationSound.play().catch((e) => console.log("Audio play failed:", e));
       }
     });
