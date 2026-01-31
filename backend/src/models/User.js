@@ -44,6 +44,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    // RSA private key (stored for key recovery - encrypted in production)
+    privateKey: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true } // createdAt & updatedAt
 );
