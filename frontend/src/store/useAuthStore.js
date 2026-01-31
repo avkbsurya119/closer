@@ -2,6 +2,13 @@ import { create } from "zustand";
 import { axiosInstance } from "../lib/axios";
 import toast from "react-hot-toast";
 import { io } from "socket.io-client";
+import {
+  generateKeyPair,
+  storePrivateKey,
+  getStoredPrivateKey,
+  removePrivateKey,
+  hasEncryptionKeys,
+} from "../lib/crypto";
 
 const BASE_URL = import.meta.env.MODE === "development" ? "http://localhost:3000" : "/";
 
@@ -71,14 +78,24 @@ export const useAuthStore = create((set, get) => ({
         otp,
       });
 
+      // Generate encryption key pair for E2E encryption
+      console.log("Generating encryption keys...");
+      const { publicKey, privateKey } = await generateKeyPair();
+
+      // Store public key on server
+      await axiosInstance.post("/auth/public-key", { publicKey });
+
+      // Store private key in localStorage
+      storePrivateKey(privateKey);
+
       set({
-        authUser: res.data,
+        authUser: { ...res.data, publicKey },
         pendingUserId: null,
         pendingPhone: null,
         otpStep: null,
       });
 
-      toast.success("Account created successfully!");
+      toast.success("Account created with E2E encryption!");
       get().connectSocket();
       return true;
     } catch (error) {
@@ -127,8 +144,26 @@ export const useAuthStore = create((set, get) => ({
         otp,
       });
 
+      let userData = res.data;
+
+      // Check if user has local private key
+      if (!hasEncryptionKeys()) {
+        // Generate new key pair if no local key exists
+        console.log("No local encryption key found. Generating new keys...");
+        const { publicKey, privateKey } = await generateKeyPair();
+
+        // Store new public key on server
+        await axiosInstance.post("/auth/public-key", { publicKey });
+
+        // Store private key locally
+        storePrivateKey(privateKey);
+
+        userData = { ...userData, publicKey };
+        toast.success("New encryption keys generated!");
+      }
+
       set({
-        authUser: res.data,
+        authUser: userData,
         pendingUserId: null,
         pendingPhone: null,
         otpStep: null,
@@ -182,6 +217,8 @@ export const useAuthStore = create((set, get) => ({
   logout: async () => {
     try {
       await axiosInstance.post("/auth/logout");
+      // Note: We keep the private key in localStorage so user can decrypt old messages on re-login
+      // Only remove if user explicitly wants to clear keys
       set({ authUser: null });
       toast.success("Logged out successfully");
       get().disconnectSocket();

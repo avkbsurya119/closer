@@ -36,7 +36,16 @@ export const getMessagesByUserId = async (req, res) => {
 
 export const sendMessage = async (req, res) => {
   try {
-    const { text, image } = req.body;
+    const {
+      text,
+      image,
+      isEncrypted,
+      encryptedKey,
+      senderEncryptedKey,
+      iv,
+      signature,
+      senderPublicKey,
+    } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
@@ -63,6 +72,14 @@ export const sendMessage = async (req, res) => {
       receiverId,
       text,
       image: imageUrl,
+      // E2E Encryption fields
+      isEncrypted: isEncrypted || false,
+      encryptedKey,
+      senderEncryptedKey,
+      iv,
+      // Digital Signature fields
+      signature,
+      senderPublicKey,
     });
 
     await newMessage.save();

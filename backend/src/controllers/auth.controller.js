@@ -169,6 +169,7 @@ export const verifySignupOTP = async (req, res) => {
       email: user.email,
       phone: user.phone,
       profilePic: user.profilePic,
+      publicKey: user.publicKey,
     });
   } catch (error) {
     console.log("Error in verifySignupOTP controller:", error);
@@ -249,6 +250,7 @@ export const verifyLoginOTP = async (req, res) => {
       email: user.email,
       phone: user.phone,
       profilePic: user.profilePic,
+      publicKey: user.publicKey,
     });
   } catch (error) {
     console.log("Error in verifyLoginOTP controller:", error);
@@ -322,9 +324,60 @@ export const checkAuth = async (req, res) => {
       email: req.user.email,
       phone: req.user.phone,
       profilePic: req.user.profilePic,
+      publicKey: req.user.publicKey,
     });
   } catch (error) {
     console.log("Error in checkAuth controller:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// ==================== PUBLIC KEY MANAGEMENT ====================
+
+// Store user's public key
+export const storePublicKey = async (req, res) => {
+  try {
+    const { publicKey } = req.body;
+    const userId = req.user._id;
+
+    if (!publicKey) {
+      return res.status(400).json({ message: "Public key is required" });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { publicKey },
+      { new: true }
+    ).select("-password -otp -otpExpiry");
+
+    res.status(200).json({
+      message: "Public key stored successfully",
+      publicKey: user.publicKey,
+    });
+  } catch (error) {
+    console.log("Error in storePublicKey controller:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+// Get user's public key by userId
+export const getPublicKey = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select("publicKey fullName");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Return null publicKey gracefully (user may not have E2E setup)
+    res.status(200).json({
+      userId: user._id,
+      fullName: user.fullName,
+      publicKey: user.publicKey || null,
+    });
+  } catch (error) {
+    console.log("Error in getPublicKey controller:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };

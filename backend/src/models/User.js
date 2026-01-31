@@ -39,6 +39,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // RSA public key for E2E encryption
+    publicKey: {
+      type: String,
+      default: null,
+    },
   },
   { timestamps: true } // createdAt & updatedAt
 );
