@@ -31,10 +31,13 @@ export const useAuthStore = create((set, get) => ({
     try {
       const res = await axiosInstance.get("/auth/check");
 
-      // Recover private key from server if not in localStorage
-      if (!hasEncryptionKeys() && res.data.privateKey) {
-        console.log("Recovering encryption key from server...");
-        storePrivateKey(res.data.privateKey);
+      // ALWAYS sync private key from server to ensure decryption works
+      if (res.data.privateKey) {
+        const localKey = getStoredPrivateKey();
+        if (localKey !== res.data.privateKey) {
+          console.log("Syncing encryption key from server...");
+          storePrivateKey(res.data.privateKey);
+        }
       }
 
       set({ authUser: res.data });
@@ -153,13 +156,18 @@ export const useAuthStore = create((set, get) => ({
 
       let userData = res.data;
 
-      // Check if user has local private key
-      if (!hasEncryptionKeys()) {
-        // Try to recover private key from server
-        if (res.data.privateKey) {
-          console.log("Recovering encryption key from server...");
-          storePrivateKey(res.data.privateKey);
-        } else if (res.data.publicKey) {
+      // ALWAYS sync private key from server to ensure decryption works
+      // This fixes issues when localStorage has stale/mismatched keys
+      if (res.data.privateKey) {
+        // Server has the authoritative private key - always use it
+        const localKey = getStoredPrivateKey();
+        if (localKey !== res.data.privateKey) {
+          console.log("Syncing encryption key from server (key mismatch detected)...");
+        }
+        storePrivateKey(res.data.privateKey);
+      } else if (!hasEncryptionKeys()) {
+        // No key on server and no local key - generate new ones
+        if (res.data.publicKey) {
           // User has public key but no private key anywhere - can't recover
           console.log("No private key found. E2E encryption disabled for old messages.");
         } else {

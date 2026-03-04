@@ -28,7 +28,19 @@ export const sendOTP = async (phone, otp) => {
     return { success: true, message: "OTP sent successfully" };
   } catch (error) {
     console.error("Error sending OTP:", error.message);
-    throw new Error("Failed to send OTP. Please try again.");
+    console.error("Twilio Error Code:", error.code);
+    console.error("Twilio Error Details:", error.moreInfo);
+
+    // Provide more specific error messages
+    if (error.code === 21608) {
+      throw new Error("Phone number not verified. Please verify this number in Twilio console first.");
+    } else if (error.code === 21211) {
+      throw new Error("Invalid phone number format.");
+    } else if (error.code === 21614) {
+      throw new Error("Phone number is not capable of receiving SMS.");
+    } else {
+      throw new Error("Failed to send OTP. Please try again.");
+    }
   }
 };
 
